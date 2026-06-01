@@ -34,7 +34,7 @@ When an admin opens a lesson, the full lesson text is shown. Long lessons are sp
 The admin panel supports:
 
 - adding a lesson step by step;
-- attaching video, audio, voice, photo, or document files;
+- attaching one or multiple video, audio, voice, photo, or document files;
 - listing lessons;
 - editing lesson title, text, and media;
 - deleting lessons.
@@ -61,14 +61,21 @@ Lesson with video:
   "order": 2,
   "title": "Урок 2",
   "text": "Описание видео",
-  "media": {
-    "type": "video",
-    "file_id": "telegram_file_id_here"
-  }
+  "media": [
+    {
+      "type": "video",
+      "file_id": "telegram_file_id_here"
+    },
+    {
+      "type": "video",
+      "file_id": "second_telegram_file_id_here"
+    }
+  ]
 }
 ```
 
 Supported media types: `audio`, `document`, `photo`, `video`, `voice`.
+When adding a lesson in `/admin`, send multiple media files one by one and then send `/done`.
 
 ## Getting file_id
 

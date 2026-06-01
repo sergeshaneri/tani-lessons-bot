@@ -77,9 +77,16 @@ function getLessons() {
 
 function saveLessons(lessons) {
   const normalizedLessons = lessons
-    .map((lesson, index) => ({ ...lesson, order: index + 1 }))
+    .map((lesson, index) => ({ ...lesson, order: index + 1, media: normalizeMedia(lesson.media) }))
     .sort((a, b) => a.order - b.order);
   writeJson(LESSONS_PATH, normalizedLessons);
+}
+
+function normalizeMedia(media) {
+  if (!media) return [];
+  if (Array.isArray(media)) return media.filter((item) => item?.file_id && item?.type);
+  if (media.file_id && media.type) return [media];
+  return [];
 }
 
 function getProgress() {
@@ -162,14 +169,16 @@ function lessonListKeyboard(lessons) {
 }
 
 function lessonEditKeyboard(index, lesson) {
+  const mediaItems = normalizeMedia(lesson.media);
   const rows = [
     [{ text: "Редактировать название", callback_data: `admin:edit:title:${index}` }],
     [{ text: "Редактировать текст", callback_data: `admin:edit:text:${index}` }],
-    [{ text: lesson.media ? "Заменить медиа" : "Добавить медиа", callback_data: `admin:edit:media:${index}` }],
+    [{ text: "Добавить медиа", callback_data: `admin:edit:add_media:${index}` }],
+    [{ text: "Заменить все медиа", callback_data: `admin:edit:replace_media:${index}` }],
   ];
 
-  if (lesson.media) {
-    rows.push([{ text: "Удалить медиа", callback_data: `admin:remove_media:${index}` }]);
+  if (mediaItems.length > 0) {
+    rows.push([{ text: "Удалить все медиа", callback_data: `admin:remove_media:${index}` }]);
   }
 
   rows.push([{ text: "Удалить урок", callback_data: `admin:delete:${index}` }]);
@@ -193,6 +202,15 @@ async function sendLongMessage(chatId, text, finalExtra = {}) {
   for (let index = 0; index < chunks.length; index += 1) {
     const isLastChunk = index === chunks.length - 1;
     await sendMessage(chatId, chunks[index], isLastChunk ? finalExtra : {});
+  }
+}
+
+async function sendLongPlainMessage(chatId, text, finalExtra = {}) {
+  const chunks = splitText(text || "Урок без текста.", MESSAGE_TEXT_LIMIT);
+
+  for (let index = 0; index < chunks.length; index += 1) {
+    const isLastChunk = index === chunks.length - 1;
+    await sendMessage(chatId, escapeHtml(chunks[index]), isLastChunk ? finalExtra : {});
   }
 }
 
@@ -241,26 +259,35 @@ async function sendLesson(chatId, userId, lessonIndex) {
   }
 
   const lesson = lessons[lessonIndex];
+  const mediaItems = normalizeMedia(lesson.media);
   const progress = getProgress();
   progress[String(userId)] = lessonIndex;
   saveProgress(progress);
 
-  const caption = lesson.text ? escapeHtml(lesson.text).trim() : "";
+  const lessonText = lesson.text ? String(lesson.text).trim() : "";
   const hasNext = lessonIndex + 1 < lessons.length;
   const replyMarkup = hasNext ? studentNextButton() : undefined;
 
-  if (lesson.media?.file_id && lesson.media?.type) {
-    if (caption.length > MEDIA_CAPTION_LIMIT) {
-      await sendMessage(chatId, caption);
-      await sendMedia(chatId, lesson.media.type, lesson.media.file_id, "", replyMarkup);
+  if (mediaItems.length > 0) {
+    const escapedLessonText = escapeHtml(lessonText);
+    if (mediaItems.length === 1 && escapedLessonText.length > 0 && escapedLessonText.length <= MEDIA_CAPTION_LIMIT) {
+      await sendMedia(chatId, mediaItems[0].type, mediaItems[0].file_id, escapedLessonText, replyMarkup);
       return;
     }
 
-    await sendMedia(chatId, lesson.media.type, lesson.media.file_id, caption, replyMarkup);
+    if (lessonText) {
+      await sendLongPlainMessage(chatId, lessonText);
+    }
+
+    for (let index = 0; index < mediaItems.length; index += 1) {
+      const isLastMedia = index === mediaItems.length - 1;
+      const mediaReplyMarkup = isLastMedia ? replyMarkup : undefined;
+      await sendMedia(chatId, mediaItems[index].type, mediaItems[index].file_id, "", mediaReplyMarkup);
+    }
     return;
   }
 
-  await sendMessage(chatId, caption || "Урок без текста.", {
+  await sendLongPlainMessage(chatId, lessonText || "Урок без текста.", {
     reply_markup: replyMarkup,
   });
 }
@@ -377,20 +404,19 @@ async function showLessonEditor(chatId, index) {
     return;
   }
 
-  const mediaText = lesson.media
-    ? `${lesson.media.type}, file_id сохранен`
+  const mediaItems = normalizeMedia(lesson.media);
+  const mediaText = mediaItems.length > 0
+    ? `${mediaItems.length} файл(ов): ${mediaItems.map((item) => item.type).join(", ")}`
     : "нет";
   const header = [
     `<b>Урок ${index + 1}</b>`,
     "",
     `<b>Название:</b> ${escapeHtml(lesson.title || "Без названия")}`,
     `<b>Медиа:</b> ${escapeHtml(mediaText)}`,
-    "",
-    `<b>Текст:</b>`,
   ].join("\n");
-  const text = `${header}\n${escapeHtml(lesson.text || "Без текста")}`;
 
-  await sendLongMessage(chatId, text, {
+  await sendMessage(chatId, header);
+  await sendLongPlainMessage(chatId, lesson.text || "Без текста", {
     reply_markup: lessonEditKeyboard(index, lesson),
   });
 }
@@ -419,11 +445,12 @@ async function startLessonEdit(chatId, userId, index, field) {
     return;
   }
 
-  setAdminState(userId, {
+  const editState = {
     action: "edit_lesson",
     index,
     field,
-  });
+  };
+  setAdminState(userId, editState);
 
   if (field === "title") {
     await sendMessage(chatId, "Отправь новое название урока. Для отмены отправь /cancel.");
@@ -435,8 +462,14 @@ async function startLessonEdit(chatId, userId, index, field) {
     return;
   }
 
-  if (field === "media") {
-    await sendMessage(chatId, "Отправь новое видео, аудио, голосовое, фото или документ. Для отмены отправь /cancel.");
+  if (field === "add_media") {
+    await sendMessage(chatId, "Отправь видео, аудио, голосовое, фото или документ, которое нужно добавить к уроку. Для отмены отправь /cancel.");
+    return;
+  }
+
+  if (field === "replace_media") {
+    setAdminState(userId, { ...editState, media: [] });
+    await sendMessage(chatId, "Отправь один или несколько новых медиафайлов. Они заменят все текущие медиа. Когда закончишь, отправь /done. Для отмены отправь /cancel.");
   }
 }
 
@@ -483,24 +516,32 @@ async function handleAdminDraftMessage(message) {
 
     state.draft.text = text;
     state.step = "media";
+    state.draft.media = [];
     setAdminState(message.from.id, state);
-    await sendMessage(chatId, "Теперь отправь видео, аудио, голосовое, фото или документ. Если медиа нет, отправь /skip.");
+    await sendMessage(chatId, "Теперь отправь одно или несколько видео, аудио, голосовых, фото или документов. Когда закончишь, отправь /done. Если медиа нет, отправь /skip.");
     return true;
   }
 
   if (state.step === "media") {
     if (text === "/skip") {
-      await publishAdminDraft(message.from.id, chatId, state.draft, null);
+      await publishAdminDraft(message.from.id, chatId, state.draft, []);
+      return true;
+    }
+
+    if (text === "/done") {
+      await publishAdminDraft(message.from.id, chatId, state.draft, state.draft.media || []);
       return true;
     }
 
     const media = extractMedia(message);
     if (!media) {
-      await sendMessage(chatId, "Отправь медиафайл или /skip.");
+      await sendMessage(chatId, "Отправь медиафайл, /done или /skip.");
       return true;
     }
 
-    await publishAdminDraft(message.from.id, chatId, state.draft, media);
+    state.draft.media = [...(state.draft.media || []), media];
+    setAdminState(message.from.id, state);
+    await sendMessage(chatId, `Медиа добавлено: ${state.draft.media.length}. Можешь отправить еще файл или /done.`);
     return true;
   }
 
@@ -550,18 +591,40 @@ async function handleLessonEditMessage(message, state) {
     return;
   }
 
-  if (state.field === "media") {
+  if (state.field === "add_media") {
     const media = extractMedia(message);
     if (!media) {
       await sendMessage(chatId, "Отправь медиафайл: видео, аудио, голосовое, фото или документ.");
       return;
     }
 
-    lesson.media = media;
+    lesson.media = [...normalizeMedia(lesson.media), media];
     saveLessons(lessons);
     setAdminState(message.from.id, null);
-    await sendMessage(chatId, "Медиа обновлено.");
+    await sendMessage(chatId, "Медиа добавлено.");
     await showLessonEditor(chatId, state.index);
+    return;
+  }
+
+  if (state.field === "replace_media") {
+    if (message.text?.trim() === "/done") {
+      lesson.media = state.media || [];
+      saveLessons(lessons);
+      setAdminState(message.from.id, null);
+      await sendMessage(chatId, "Медиа заменено.");
+      await showLessonEditor(chatId, state.index);
+      return;
+    }
+
+    const media = extractMedia(message);
+    if (!media) {
+      await sendMessage(chatId, "Отправь медиафайл или /done.");
+      return;
+    }
+
+    state.media = [...(state.media || []), media];
+    setAdminState(message.from.id, state);
+    await sendMessage(chatId, `Медиа добавлено в новый набор: ${state.media.length}. Можешь отправить еще файл или /done.`);
   }
 }
 
@@ -571,7 +634,7 @@ async function publishAdminDraft(userId, chatId, draft, media) {
     order: lessons.length + 1,
     title: draft.title,
     text: draft.text,
-    media,
+    media: normalizeMedia(media),
   });
   saveLessons(lessons);
   setAdminState(userId, null);
@@ -609,7 +672,7 @@ async function removeLessonMedia(chatId, index) {
     return;
   }
 
-  lesson.media = null;
+  lesson.media = [];
   saveLessons(lessons);
   await sendMessage(chatId, "Медиа удалено.");
   await showLessonEditor(chatId, index);
