@@ -37,6 +37,7 @@ The admin panel supports:
 - attaching one or multiple video, audio, voice, photo, or document files;
 - listing lessons;
 - editing lesson title, text, and media;
+- adding extra messages after the main lesson;
 - deleting lessons.
 
 If `ADMIN_IDS` is empty, the admin panel is disabled.
@@ -48,7 +49,8 @@ Text-only lesson:
   "order": 1,
   "title": "Урок 1",
   "text": "Текст урока",
-  "media": null
+  "media": [],
+  "extras": []
 }
 ```
 
@@ -70,12 +72,17 @@ Lesson with video:
       "type": "video",
       "file_id": "second_telegram_file_id_here"
     }
+  ],
+  "extras": [
+    "Дополнительное задание",
+    "Материалы для самостоятельной работы"
   ]
 }
 ```
 
 Supported media types: `audio`, `document`, `photo`, `video`, `voice`.
 When adding a lesson in `/admin`, send multiple media files one by one and then send `/done`.
+After the media step, the bot asks for extra messages. Send them one by one and then send `/done`, or send `/skip`.
 
 ## Getting file_id
 
