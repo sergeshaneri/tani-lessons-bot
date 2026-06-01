@@ -37,6 +37,8 @@ The admin panel supports:
 - mixing text and media inside extra blocks;
 - listing and deleting lessons.
 
+Lesson deletion requires a second confirmation button.
+
 ## Lesson Structure
 
 `title` is an internal admin label. Students receive only `text`, main `media`, and `blocks`.

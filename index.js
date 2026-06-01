@@ -252,9 +252,18 @@ function lessonEditKeyboard(index, lesson) {
     rows.push([{ text: "Удалить все медиа", callback_data: `admin:remove_media:${index}` }]);
   }
 
-  rows.push([{ text: "Удалить урок", callback_data: `admin:delete:${index}` }]);
+  rows.push([{ text: "Удалить урок", callback_data: `admin:confirm_delete:${index}` }]);
   rows.push([{ text: "Назад к списку", callback_data: "admin:list" }]);
   return { inline_keyboard: rows };
+}
+
+function deleteConfirmKeyboard(index) {
+  return {
+    inline_keyboard: [
+      [{ text: "Да, удалить урок", callback_data: `admin:delete:${index}` }],
+      [{ text: "Нет, оставить", callback_data: `admin:lesson:${index}` }],
+    ],
+  };
 }
 
 async function sendMessage(chatId, text, extra = {}) {
@@ -904,6 +913,24 @@ async function deleteLesson(chatId, index) {
   });
 }
 
+async function confirmDeleteLesson(chatId, index) {
+  const lessons = getLessons();
+  const lesson = lessons[index];
+
+  if (!lesson) {
+    await sendMessage(chatId, "Урок не найден.", {
+      reply_markup: adminMenuKeyboard(),
+    });
+    return;
+  }
+
+  await sendMessage(
+    chatId,
+    `Точно удалить урок ${index + 1}: ${escapeHtml(lesson.title || "Без названия")}?`,
+    { reply_markup: deleteConfirmKeyboard(index) },
+  );
+}
+
 async function removeLessonMedia(chatId, index) {
   const lessons = getLessons();
   const lesson = lessons[index];
@@ -1102,6 +1129,12 @@ async function handleCallbackQuery(callbackQuery) {
   if (data.startsWith("admin:remove_blocks:")) {
     const index = Number(data.split(":")[2]);
     await removeLessonBlocks(chatId, index);
+    return;
+  }
+
+  if (data.startsWith("admin:confirm_delete:")) {
+    const index = Number(data.split(":")[2]);
+    await confirmDeleteLesson(chatId, index);
     return;
   }
 
