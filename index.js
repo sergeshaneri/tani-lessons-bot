@@ -140,6 +140,18 @@ function adminMenuKeyboard() {
   };
 }
 
+function adminReplyKeyboard() {
+  return {
+    keyboard: [
+      [{ text: "Админ-панель" }],
+      [{ text: "Добавить урок" }, { text: "Список уроков" }],
+      [{ text: "Отменить действие" }],
+    ],
+    resize_keyboard: true,
+    is_persistent: true,
+  };
+}
+
 function lessonListKeyboard(lessons) {
   const rows = lessons.map((lesson, index) => [
     { text: `${index + 1}. ${shortenText(lesson.title || "Без названия", 40)}`, callback_data: `admin:lesson:${index}` },
@@ -294,6 +306,9 @@ async function handleReset(message) {
 }
 
 async function showAdminMenu(chatId) {
+  await sendMessage(chatId, "Админские кнопки закреплены внизу чата.", {
+    reply_markup: adminReplyKeyboard(),
+  });
   await sendMessage(chatId, "Админ-панель", {
     reply_markup: adminMenuKeyboard(),
   });
@@ -401,7 +416,7 @@ async function handleAdminDraftMessage(message) {
   if (text === "/cancel") {
     setAdminState(message.from.id, null);
     await sendMessage(chatId, "Действие отменено.", {
-      reply_markup: adminMenuKeyboard(),
+      reply_markup: adminReplyKeyboard(),
     });
     return true;
   }
@@ -626,10 +641,33 @@ async function handleMessage(message) {
     return;
   }
 
+  if (isAdmin(message.from.id) && message.text === "Админ-панель") {
+    await showAdminMenu(message.chat.id);
+    return;
+  }
+
+  if (isAdmin(message.from.id) && message.text === "Добавить урок") {
+    await startLessonCreation(message.chat.id, message.from.id);
+    return;
+  }
+
+  if (isAdmin(message.from.id) && message.text === "Список уроков") {
+    await showLessonsList(message.chat.id);
+    return;
+  }
+
+  if (isAdmin(message.from.id) && message.text === "Отменить действие") {
+    setAdminState(message.from.id, null);
+    await sendMessage(message.chat.id, "Действие отменено.", {
+      reply_markup: adminReplyKeyboard(),
+    });
+    return;
+  }
+
   if (command === "/cancel" && isAdmin(message.from.id)) {
     setAdminState(message.from.id, null);
     await sendMessage(message.chat.id, "Действие отменено.", {
-      reply_markup: adminMenuKeyboard(),
+      reply_markup: adminReplyKeyboard(),
     });
     return;
   }
