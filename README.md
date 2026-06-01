@@ -48,6 +48,8 @@ Text-only lesson:
 }
 ```
 
+`title` is an internal admin label. Students receive only the `text` content and attached media.
+
 Lesson with video:
 
 ```json

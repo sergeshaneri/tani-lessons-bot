@@ -195,9 +195,7 @@ async function sendLesson(chatId, userId, lessonIndex) {
   progress[String(userId)] = lessonIndex;
   saveProgress(progress);
 
-  const title = lesson.title ? `<b>${escapeHtml(lesson.title)}</b>\n\n` : "";
-  const body = lesson.text ? escapeHtml(lesson.text) : "";
-  const caption = `${title}${body}`.trim();
+  const caption = lesson.text ? escapeHtml(lesson.text).trim() : "";
   const hasNext = lessonIndex + 1 < lessons.length;
   const replyMarkup = hasNext ? studentNextButton() : undefined;
 
