@@ -17,6 +17,7 @@ const LESSONS_PATH = process.env.LESSONS_PATH || path.join(DATA_DIR, "lessons.js
 const PROGRESS_PATH = path.join(DATA_DIR, "progress.json");
 const ADMIN_STATE_PATH = path.join(DATA_DIR, "admin-state.json");
 const MEDIA_CAPTION_LIMIT = 1000;
+const MESSAGE_TEXT_LIMIT = 3900;
 
 let offset = 0;
 
@@ -186,6 +187,39 @@ async function sendMessage(chatId, text, extra = {}) {
   });
 }
 
+async function sendLongMessage(chatId, text, finalExtra = {}) {
+  const chunks = splitText(text, MESSAGE_TEXT_LIMIT);
+
+  for (let index = 0; index < chunks.length; index += 1) {
+    const isLastChunk = index === chunks.length - 1;
+    await sendMessage(chatId, chunks[index], isLastChunk ? finalExtra : {});
+  }
+}
+
+function splitText(text, maxLength) {
+  const value = String(text);
+  if (value.length <= maxLength) return [value];
+
+  const chunks = [];
+  let remaining = value;
+
+  while (remaining.length > maxLength) {
+    let splitAt = remaining.lastIndexOf("\n", maxLength);
+    if (splitAt < maxLength * 0.5) {
+      splitAt = remaining.lastIndexOf(" ", maxLength);
+    }
+    if (splitAt < maxLength * 0.5) {
+      splitAt = maxLength;
+    }
+
+    chunks.push(remaining.slice(0, splitAt).trimEnd());
+    remaining = remaining.slice(splitAt).trimStart();
+  }
+
+  if (remaining) chunks.push(remaining);
+  return chunks;
+}
+
 async function answerCallbackQuery(callbackQueryId, text) {
   return telegram("answerCallbackQuery", {
     callback_query_id: callbackQueryId,
@@ -346,17 +380,17 @@ async function showLessonEditor(chatId, index) {
   const mediaText = lesson.media
     ? `${lesson.media.type}, file_id сохранен`
     : "нет";
-  const text = [
+  const header = [
     `<b>Урок ${index + 1}</b>`,
     "",
     `<b>Название:</b> ${escapeHtml(lesson.title || "Без названия")}`,
     `<b>Медиа:</b> ${escapeHtml(mediaText)}`,
     "",
     `<b>Текст:</b>`,
-    escapeHtml(shortenText(lesson.text || "Без текста", 900)),
   ].join("\n");
+  const text = `${header}\n${escapeHtml(lesson.text || "Без текста")}`;
 
-  await sendMessage(chatId, text, {
+  await sendLongMessage(chatId, text, {
     reply_markup: lessonEditKeyboard(index, lesson),
   });
 }

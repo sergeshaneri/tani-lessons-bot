@@ -29,6 +29,7 @@ Admins can manage lessons directly in Telegram:
 
 After an admin sends `/admin`, Telegram shows persistent admin buttons in that admin's chat.
 Non-admin users do not get these buttons and cannot access admin callbacks.
+When an admin opens a lesson, the full lesson text is shown. Long lessons are split into multiple Telegram messages.
 
 The admin panel supports:
 
