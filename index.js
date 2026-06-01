@@ -10,7 +10,8 @@ const ADMIN_IDS = (process.env.ADMIN_IDS || "")
   .filter(Boolean);
 
 const API_BASE = BOT_TOKEN ? `https://api.telegram.org/bot${BOT_TOKEN}` : "";
-const DATA_DIR = path.join(__dirname, "data");
+const LOCAL_DATA_DIR = path.join(__dirname, "data");
+const DATA_DIR = process.env.DATA_DIR || process.env.RAILWAY_VOLUME_MOUNT_PATH || LOCAL_DATA_DIR;
 const DEFAULT_LESSONS_PATH = path.join(__dirname, "lessons.json");
 const LESSONS_PATH = process.env.LESSONS_PATH || path.join(DATA_DIR, "lessons.json");
 const PROGRESS_PATH = path.join(DATA_DIR, "progress.json");
@@ -27,6 +28,9 @@ if (!BOT_TOKEN) {
 if (ADMIN_IDS.length === 0) {
   console.warn("ADMIN_IDS is empty. Admin panel will be disabled.");
 }
+
+console.log(`Data directory: ${DATA_DIR}`);
+console.log(`Lessons file: ${LESSONS_PATH}`);
 
 function loadEnvFile(filePath) {
   if (!fs.existsSync(filePath)) return;

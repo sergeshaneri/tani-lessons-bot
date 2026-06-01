@@ -89,5 +89,14 @@ ADMIN_IDS=...
 4. Railway will run `npm start`.
 
 Current lessons, admin drafts, and student progress are saved in `data/`.
+On Railway, the bot automatically uses `RAILWAY_VOLUME_MOUNT_PATH` when a volume is attached.
+You can also override the storage folder with `DATA_DIR`.
+
+Recommended Railway volume mount path:
+
+```text
+/app/data
+```
+
+If the volume is mounted somewhere else, keep it as-is; the bot will use Railway's `RAILWAY_VOLUME_MOUNT_PATH`.
 On Railway without a persistent volume these files may reset on redeploy.
-For production, attach a Railway volume or switch storage to PostgreSQL.
