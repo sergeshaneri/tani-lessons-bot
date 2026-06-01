@@ -138,9 +138,25 @@ function adminMenuKeyboard() {
 
 function lessonListKeyboard(lessons) {
   const rows = lessons.map((lesson, index) => [
-    { text: `Удалить ${index + 1}`, callback_data: `admin:delete:${index}` },
+    { text: `${index + 1}. ${shortenText(lesson.title || "Без названия", 40)}`, callback_data: `admin:lesson:${index}` },
   ]);
   rows.push([{ text: "Назад", callback_data: "admin:menu" }]);
+  return { inline_keyboard: rows };
+}
+
+function lessonEditKeyboard(index, lesson) {
+  const rows = [
+    [{ text: "Редактировать название", callback_data: `admin:edit:title:${index}` }],
+    [{ text: "Редактировать текст", callback_data: `admin:edit:text:${index}` }],
+    [{ text: lesson.media ? "Заменить медиа" : "Добавить медиа", callback_data: `admin:edit:media:${index}` }],
+  ];
+
+  if (lesson.media) {
+    rows.push([{ text: "Удалить медиа", callback_data: `admin:remove_media:${index}` }]);
+  }
+
+  rows.push([{ text: "Удалить урок", callback_data: `admin:delete:${index}` }]);
+  rows.push([{ text: "Назад к списку", callback_data: "admin:list" }]);
   return { inline_keyboard: rows };
 }
 
@@ -299,6 +315,41 @@ async function showLessonsList(chatId) {
   });
 }
 
+async function showLessonEditor(chatId, index) {
+  const lessons = getLessons();
+  const lesson = lessons[index];
+
+  if (!lesson) {
+    await sendMessage(chatId, "Урок не найден.", {
+      reply_markup: adminMenuKeyboard(),
+    });
+    return;
+  }
+
+  const mediaText = lesson.media
+    ? `${lesson.media.type}, file_id сохранен`
+    : "нет";
+  const text = [
+    `<b>Урок ${index + 1}</b>`,
+    "",
+    `<b>Название:</b> ${escapeHtml(lesson.title || "Без названия")}`,
+    `<b>Медиа:</b> ${escapeHtml(mediaText)}`,
+    "",
+    `<b>Текст:</b>`,
+    escapeHtml(shortenText(lesson.text || "Без текста", 900)),
+  ].join("\n");
+
+  await sendMessage(chatId, text, {
+    reply_markup: lessonEditKeyboard(index, lesson),
+  });
+}
+
+function shortenText(value, maxLength) {
+  const text = String(value);
+  if (text.length <= maxLength) return text;
+  return `${text.slice(0, maxLength - 3)}...`;
+}
+
 async function startLessonCreation(chatId, userId) {
   setAdminState(userId, {
     action: "add_lesson",
@@ -308,20 +359,57 @@ async function startLessonCreation(chatId, userId) {
   await sendMessage(chatId, "Напиши название урока. Для отмены отправь /cancel.");
 }
 
+async function startLessonEdit(chatId, userId, index, field) {
+  const lessons = getLessons();
+  if (!lessons[index]) {
+    await sendMessage(chatId, "Урок не найден.", {
+      reply_markup: adminMenuKeyboard(),
+    });
+    return;
+  }
+
+  setAdminState(userId, {
+    action: "edit_lesson",
+    index,
+    field,
+  });
+
+  if (field === "title") {
+    await sendMessage(chatId, "Отправь новое название урока. Для отмены отправь /cancel.");
+    return;
+  }
+
+  if (field === "text") {
+    await sendMessage(chatId, "Отправь новый текст урока. Для отмены отправь /cancel.");
+    return;
+  }
+
+  if (field === "media") {
+    await sendMessage(chatId, "Отправь новое видео, аудио, голосовое, фото или документ. Для отмены отправь /cancel.");
+  }
+}
+
 async function handleAdminDraftMessage(message) {
   const state = getAdminState(message.from.id);
-  if (!state || state.action !== "add_lesson") return false;
+  if (!state) return false;
 
   const chatId = message.chat.id;
   const text = message.text?.trim();
 
   if (text === "/cancel") {
     setAdminState(message.from.id, null);
-    await sendMessage(chatId, "Добавление урока отменено.", {
+    await sendMessage(chatId, "Действие отменено.", {
       reply_markup: adminMenuKeyboard(),
     });
     return true;
   }
+
+  if (state.action === "edit_lesson") {
+    await handleLessonEditMessage(message, state);
+    return true;
+  }
+
+  if (state.action !== "add_lesson") return false;
 
   if (state.step === "title") {
     if (!text) {
@@ -368,6 +456,64 @@ async function handleAdminDraftMessage(message) {
   return false;
 }
 
+async function handleLessonEditMessage(message, state) {
+  const chatId = message.chat.id;
+  const lessons = getLessons();
+  const lesson = lessons[state.index];
+
+  if (!lesson) {
+    setAdminState(message.from.id, null);
+    await sendMessage(chatId, "Урок не найден.", {
+      reply_markup: adminMenuKeyboard(),
+    });
+    return;
+  }
+
+  if (state.field === "title") {
+    const title = message.text?.trim();
+    if (!title) {
+      await sendMessage(chatId, "Название должно быть текстом. Отправь новое название урока.");
+      return;
+    }
+
+    lesson.title = title;
+    saveLessons(lessons);
+    setAdminState(message.from.id, null);
+    await sendMessage(chatId, "Название обновлено.");
+    await showLessonEditor(chatId, state.index);
+    return;
+  }
+
+  if (state.field === "text") {
+    const text = message.text?.trim();
+    if (!text) {
+      await sendMessage(chatId, "Текст должен быть текстом. Отправь новый текст урока.");
+      return;
+    }
+
+    lesson.text = text;
+    saveLessons(lessons);
+    setAdminState(message.from.id, null);
+    await sendMessage(chatId, "Текст обновлен.");
+    await showLessonEditor(chatId, state.index);
+    return;
+  }
+
+  if (state.field === "media") {
+    const media = extractMedia(message);
+    if (!media) {
+      await sendMessage(chatId, "Отправь медиафайл: видео, аудио, голосовое, фото или документ.");
+      return;
+    }
+
+    lesson.media = media;
+    saveLessons(lessons);
+    setAdminState(message.from.id, null);
+    await sendMessage(chatId, "Медиа обновлено.");
+    await showLessonEditor(chatId, state.index);
+  }
+}
+
 async function publishAdminDraft(userId, chatId, draft, media) {
   const lessons = getLessons();
   lessons.push({
@@ -399,6 +545,23 @@ async function deleteLesson(chatId, index) {
   await sendMessage(chatId, `Удален урок: ${escapeHtml(removedLesson.title || "Без названия")}`, {
     reply_markup: adminMenuKeyboard(),
   });
+}
+
+async function removeLessonMedia(chatId, index) {
+  const lessons = getLessons();
+  const lesson = lessons[index];
+
+  if (!lesson) {
+    await sendMessage(chatId, "Урок не найден.", {
+      reply_markup: adminMenuKeyboard(),
+    });
+    return;
+  }
+
+  lesson.media = null;
+  saveLessons(lessons);
+  await sendMessage(chatId, "Медиа удалено.");
+  await showLessonEditor(chatId, index);
 }
 
 function normalizeProgressAfterLessonDelete(deletedIndex) {
@@ -517,6 +680,24 @@ async function handleCallbackQuery(callbackQuery) {
     await sendMessage(chatId, "Действие отменено.", {
       reply_markup: adminMenuKeyboard(),
     });
+    return;
+  }
+
+  if (data.startsWith("admin:lesson:")) {
+    const index = Number(data.split(":")[2]);
+    await showLessonEditor(chatId, index);
+    return;
+  }
+
+  if (data.startsWith("admin:edit:")) {
+    const [, , field, rawIndex] = data.split(":");
+    await startLessonEdit(chatId, userId, Number(rawIndex), field);
+    return;
+  }
+
+  if (data.startsWith("admin:remove_media:")) {
+    const index = Number(data.split(":")[2]);
+    await removeLessonMedia(chatId, index);
     return;
   }
 

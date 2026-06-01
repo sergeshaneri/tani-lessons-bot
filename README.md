@@ -32,6 +32,7 @@ The admin panel supports:
 - adding a lesson step by step;
 - attaching video, audio, voice, photo, or document files;
 - listing lessons;
+- editing lesson title, text, and media;
 - deleting lessons.
 
 If `ADMIN_IDS` is empty, the admin panel is disabled.
