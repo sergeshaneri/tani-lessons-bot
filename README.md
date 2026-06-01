@@ -1,0 +1,90 @@
+# Tani Lessons Bot
+
+Telegram bot for sending lesson content with a "Следующий урок" button.
+
+## Local run
+
+1. Create a bot through BotFather and copy the token.
+2. Copy `.env.example` to `.env`.
+3. Set `BOT_TOKEN`.
+4. Set `ADMIN_IDS` to your Telegram user ID. Multiple IDs can be comma-separated. Send `/myid` to the bot to see your ID.
+5. Run:
+
+```bash
+npm start
+```
+
+Node.js 18 or newer is required.
+
+## Lessons
+
+Bundled starter lessons are stored in `lessons.json`.
+When the bot runs, editable lessons are stored in `data/lessons.json`.
+
+Admins can manage lessons directly in Telegram:
+
+```text
+/admin
+```
+
+The admin panel supports:
+
+- adding a lesson step by step;
+- attaching video, audio, voice, photo, or document files;
+- listing lessons;
+- deleting lessons.
+
+If `ADMIN_IDS` is empty, the admin panel is disabled.
+
+Text-only lesson:
+
+```json
+{
+  "order": 1,
+  "title": "Урок 1",
+  "text": "Текст урока",
+  "media": null
+}
+```
+
+Lesson with video:
+
+```json
+{
+  "order": 2,
+  "title": "Урок 2",
+  "text": "Описание видео",
+  "media": {
+    "type": "video",
+    "file_id": "telegram_file_id_here"
+  }
+}
+```
+
+Supported media types: `audio`, `document`, `photo`, `video`, `voice`.
+
+## Getting file_id
+
+Send an audio, video, voice, photo, or document to the bot from an admin account.
+The bot will reply with the `file_id` and a ready JSON fragment for `lessons.json`.
+
+For large files, upload them to Telegram manually by sending them to the bot. Then reuse the returned `file_id` in `lessons.json`.
+
+You usually do not need to edit JSON manually now: use `/admin`, choose "Добавить урок", and send the file during the media step.
+
+## Railway
+
+1. Push this project to GitHub.
+2. Create a Railway project from the GitHub repository.
+3. Add Railway variables:
+
+```text
+BOT_TOKEN=...
+ADMIN_IDS=...
+```
+
+4. Railway will run `npm start`.
+
+Current lessons, admin drafts, and student progress are saved in `data/`.
+On Railway without a persistent volume these files may reset on redeploy.
+For production, attach a Railway volume or switch storage to PostgreSQL.
