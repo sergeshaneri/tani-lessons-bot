@@ -96,6 +96,8 @@ During lesson creation:
 4. Send extra blocks in the exact order students should receive them: text, media, text, media, etc.
 5. Send `/done`, or `/skip` if there are no extra blocks.
 
+In Telegram, admins can use the `Готово` and `Пропустить` buttons instead of typing `/done` and `/skip`.
+
 ## Railway
 
 Add Railway variables:

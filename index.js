@@ -202,6 +202,28 @@ function adminReplyKeyboard() {
   };
 }
 
+function adminDoneSkipKeyboard({ allowSkip = true } = {}) {
+  const controlRow = allowSkip
+    ? [{ text: "Готово" }, { text: "Пропустить" }]
+    : [{ text: "Готово" }];
+
+  return {
+    keyboard: [
+      controlRow,
+      [{ text: "Отменить действие" }],
+    ],
+    resize_keyboard: true,
+    is_persistent: true,
+  };
+}
+
+function normalizeAdminControlText(text) {
+  if (text === "Готово") return "/done";
+  if (text === "Пропустить") return "/skip";
+  if (text === "Отменить действие") return "/cancel";
+  return text;
+}
+
 function lessonListKeyboard(lessons) {
   const rows = lessons.map((lesson, index) => [
     { text: `${index + 1}. ${shortenText(lesson.title || "Без названия", 40)}`, callback_data: `admin:lesson:${index}` },
@@ -582,7 +604,9 @@ async function startLessonEdit(chatId, userId, index, field) {
 
   if (field === "replace_blocks") {
     setAdminState(userId, { ...editState, blocks: [] });
-    await sendMessage(chatId, "Отправь новые допблоки одно за другим: текст, видео, аудио, фото или документ. Они заменят все текущие допблоки. Когда закончишь, отправь /done. Для отмены отправь /cancel.");
+    await sendMessage(chatId, "Отправь новые допблоки одно за другим: текст, видео, аудио, фото или документ. Они заменят все текущие допблоки. Когда закончишь, нажми Готово.", {
+      reply_markup: adminDoneSkipKeyboard({ allowSkip: false }),
+    });
     return;
   }
 
@@ -593,7 +617,9 @@ async function startLessonEdit(chatId, userId, index, field) {
 
   if (field === "replace_media") {
     setAdminState(userId, { ...editState, media: [] });
-    await sendMessage(chatId, "Отправь один или несколько новых медиафайлов. Они заменят все текущие медиа. Когда закончишь, отправь /done. Для отмены отправь /cancel.");
+    await sendMessage(chatId, "Отправь один или несколько новых медиафайлов. Они заменят все текущие медиа. Когда закончишь, нажми Готово.", {
+      reply_markup: adminDoneSkipKeyboard({ allowSkip: false }),
+    });
   }
 }
 
@@ -602,7 +628,7 @@ async function handleAdminDraftMessage(message) {
   if (!state) return false;
 
   const chatId = message.chat.id;
-  const text = message.text?.trim();
+  const text = normalizeAdminControlText(message.text?.trim());
 
   if (text === "/cancel") {
     setAdminState(message.from.id, null);
@@ -642,7 +668,9 @@ async function handleAdminDraftMessage(message) {
     state.step = "media";
     state.draft.media = [];
     setAdminState(message.from.id, state);
-    await sendMessage(chatId, "Теперь отправь одно или несколько видео, аудио, голосовых, фото или документов. Когда закончишь, отправь /done. Если медиа нет, отправь /skip.");
+    await sendMessage(chatId, "Теперь отправь одно или несколько видео, аудио, голосовых, фото или документов. Когда закончишь, нажми Готово. Если медиа нет, нажми Пропустить.", {
+      reply_markup: adminDoneSkipKeyboard(),
+    });
     return true;
   }
 
@@ -659,13 +687,17 @@ async function handleAdminDraftMessage(message) {
 
     const media = extractMedia(message);
     if (!media) {
-      await sendMessage(chatId, "Отправь медиафайл, /done или /skip.");
+      await sendMessage(chatId, "Отправь медиафайл, нажми Готово или Пропустить.", {
+        reply_markup: adminDoneSkipKeyboard(),
+      });
       return true;
     }
 
     state.draft.media = [...(state.draft.media || []), media];
     setAdminState(message.from.id, state);
-    await sendMessage(chatId, `Медиа добавлено: ${state.draft.media.length}. Можешь отправить еще файл или /done.`);
+    await sendMessage(chatId, `Медиа добавлено: ${state.draft.media.length}. Можешь отправить еще файл или нажать Готово.`, {
+      reply_markup: adminDoneSkipKeyboard(),
+    });
     return true;
   }
 
@@ -677,13 +709,17 @@ async function handleAdminDraftMessage(message) {
 
     const block = blockFromMessage(message);
     if (!block) {
-      await sendMessage(chatId, "Отправь текст или медиафайл, /done или /skip.");
+      await sendMessage(chatId, "Отправь текст или медиафайл, нажми Готово или Пропустить.", {
+        reply_markup: adminDoneSkipKeyboard(),
+      });
       return true;
     }
 
     state.draft.blocks = [...(state.draft.blocks || []), block];
     setAdminState(message.from.id, state);
-    await sendMessage(chatId, `Допблок добавлен: ${state.draft.blocks.length}. Можешь отправить еще текст/медиа или /done.`);
+    await sendMessage(chatId, `Допблок добавлен: ${state.draft.blocks.length}. Можешь отправить еще текст/медиа или нажать Готово.`, {
+      reply_markup: adminDoneSkipKeyboard(),
+    });
     return true;
   }
 
@@ -692,6 +728,7 @@ async function handleAdminDraftMessage(message) {
 
 async function handleLessonEditMessage(message, state) {
   const chatId = message.chat.id;
+  const controlText = normalizeAdminControlText(message.text?.trim());
   const lessons = getLessons();
   const lesson = lessons[state.index];
 
@@ -750,26 +787,32 @@ async function handleLessonEditMessage(message, state) {
   }
 
   if (state.field === "replace_blocks") {
-    const text = message.text?.trim();
+    const text = controlText;
     if (text === "/done") {
       lesson.blocks = normalizeBlocks(state.blocks);
       lesson.extras = undefined;
       saveLessons(lessons);
       setAdminState(message.from.id, null);
-      await sendMessage(chatId, "Допблоки заменены.");
+      await sendMessage(chatId, "Допблоки заменены.", {
+        reply_markup: adminReplyKeyboard(),
+      });
       await showLessonEditor(chatId, state.index);
       return;
     }
 
     const block = blockFromMessage(message);
     if (!block) {
-      await sendMessage(chatId, "Отправь текст, медиафайл или /done.");
+      await sendMessage(chatId, "Отправь текст, медиафайл или нажми Готово.", {
+        reply_markup: adminDoneSkipKeyboard({ allowSkip: false }),
+      });
       return;
     }
 
     state.blocks = [...(state.blocks || []), block];
     setAdminState(message.from.id, state);
-    await sendMessage(chatId, `Допблок добавлен в новый набор: ${state.blocks.length}. Можешь отправить еще текст/медиа или /done.`);
+    await sendMessage(chatId, `Допблок добавлен в новый набор: ${state.blocks.length}. Можешь отправить еще текст/медиа или нажать Готово.`, {
+      reply_markup: adminDoneSkipKeyboard({ allowSkip: false }),
+    });
     return;
   }
 
@@ -789,24 +832,30 @@ async function handleLessonEditMessage(message, state) {
   }
 
   if (state.field === "replace_media") {
-    if (message.text?.trim() === "/done") {
+    if (controlText === "/done") {
       lesson.media = state.media || [];
       saveLessons(lessons);
       setAdminState(message.from.id, null);
-      await sendMessage(chatId, "Медиа заменено.");
+      await sendMessage(chatId, "Медиа заменено.", {
+        reply_markup: adminReplyKeyboard(),
+      });
       await showLessonEditor(chatId, state.index);
       return;
     }
 
     const media = extractMedia(message);
     if (!media) {
-      await sendMessage(chatId, "Отправь медиафайл или /done.");
+      await sendMessage(chatId, "Отправь медиафайл или нажми Готово.", {
+        reply_markup: adminDoneSkipKeyboard({ allowSkip: false }),
+      });
       return;
     }
 
     state.media = [...(state.media || []), media];
     setAdminState(message.from.id, state);
-    await sendMessage(chatId, `Медиа добавлено в новый набор: ${state.media.length}. Можешь отправить еще файл или /done.`);
+    await sendMessage(chatId, `Медиа добавлено в новый набор: ${state.media.length}. Можешь отправить еще файл или нажать Готово.`, {
+      reply_markup: adminDoneSkipKeyboard({ allowSkip: false }),
+    });
   }
 }
 
@@ -815,7 +864,9 @@ async function startExtrasCreationStep(userId, chatId, state, media) {
   state.draft.blocks = [];
   state.step = "blocks";
   setAdminState(userId, state);
-  await sendMessage(chatId, "Теперь отправь допблоки после основного урока: текст, видео, аудио, фото или документ в нужном порядке. Когда закончишь, отправь /done. Если допблоков нет, отправь /skip.");
+  await sendMessage(chatId, "Теперь отправь допблоки после основного урока: текст, видео, аудио, фото или документ в нужном порядке. Когда закончишь, нажми Готово. Если допблоков нет, нажми Пропустить.", {
+    reply_markup: adminDoneSkipKeyboard(),
+  });
 }
 
 async function publishAdminDraft(userId, chatId, draft) {
@@ -831,8 +882,9 @@ async function publishAdminDraft(userId, chatId, draft) {
   setAdminState(userId, null);
 
   await sendMessage(chatId, "Урок добавлен.", {
-    reply_markup: adminMenuKeyboard(),
+    reply_markup: adminReplyKeyboard(),
   });
+  await showAdminMenu(chatId);
 }
 
 async function deleteLesson(chatId, index) {
