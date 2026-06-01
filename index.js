@@ -81,7 +81,8 @@ function saveLessons(lessons) {
       ...lesson,
       order: index + 1,
       media: normalizeMedia(lesson.media),
-      extras: normalizeExtras(lesson.extras),
+      blocks: normalizeBlocks(lesson.blocks, lesson.extras),
+      extras: undefined,
     }))
     .sort((a, b) => a.order - b.order);
   writeJson(LESSONS_PATH, normalizedLessons);
@@ -98,6 +99,36 @@ function normalizeExtras(extras) {
   if (!extras) return [];
   if (Array.isArray(extras)) return extras.map((item) => String(item).trim()).filter(Boolean);
   return [String(extras).trim()].filter(Boolean);
+}
+
+function normalizeBlocks(blocks, legacyExtras = []) {
+  const normalizedBlocks = Array.isArray(blocks)
+    ? blocks
+        .map((block) => {
+          if (block?.type === "text" && block.text) {
+            return { type: "text", text: String(block.text).trim() };
+          }
+          if (block?.type === "media") {
+            const media = normalizeMedia(block.media)[0];
+            return media ? { type: "media", media } : null;
+          }
+          return null;
+        })
+        .filter(Boolean)
+    : [];
+
+  const legacyBlocks = normalizeExtras(legacyExtras).map((text) => ({ type: "text", text }));
+  return [...normalizedBlocks, ...legacyBlocks];
+}
+
+function blockFromMessage(message) {
+  const media = extractMedia(message);
+  if (media) return { type: "media", media };
+
+  const text = message.text?.trim();
+  if (text) return { type: "text", text };
+
+  return null;
 }
 
 function getProgress() {
@@ -181,18 +212,18 @@ function lessonListKeyboard(lessons) {
 
 function lessonEditKeyboard(index, lesson) {
   const mediaItems = normalizeMedia(lesson.media);
-  const extraItems = normalizeExtras(lesson.extras);
+  const blocks = normalizeBlocks(lesson.blocks, lesson.extras);
   const rows = [
     [{ text: "Редактировать название", callback_data: `admin:edit:title:${index}` }],
     [{ text: "Редактировать текст", callback_data: `admin:edit:text:${index}` }],
-    [{ text: "Добавить допсообщение", callback_data: `admin:edit:add_extra:${index}` }],
-    [{ text: "Заменить все допсообщения", callback_data: `admin:edit:replace_extras:${index}` }],
+    [{ text: "Добавить допблок", callback_data: `admin:edit:add_block:${index}` }],
+    [{ text: "Заменить все допблоки", callback_data: `admin:edit:replace_blocks:${index}` }],
     [{ text: "Добавить медиа", callback_data: `admin:edit:add_media:${index}` }],
     [{ text: "Заменить все медиа", callback_data: `admin:edit:replace_media:${index}` }],
   ];
 
-  if (extraItems.length > 0) {
-    rows.push([{ text: "Удалить все допсообщения", callback_data: `admin:remove_extras:${index}` }]);
+  if (blocks.length > 0) {
+    rows.push([{ text: "Удалить все допблоки", callback_data: `admin:remove_blocks:${index}` }]);
   }
 
   if (mediaItems.length > 0) {
@@ -278,7 +309,7 @@ async function sendLesson(chatId, userId, lessonIndex) {
 
   const lesson = lessons[lessonIndex];
   const mediaItems = normalizeMedia(lesson.media);
-  const extraItems = normalizeExtras(lesson.extras);
+  const blocks = normalizeBlocks(lesson.blocks, lesson.extras);
   const progress = getProgress();
   progress[String(userId)] = lessonIndex;
   saveProgress(progress);
@@ -290,7 +321,7 @@ async function sendLesson(chatId, userId, lessonIndex) {
   if (mediaItems.length > 0) {
     const escapedLessonText = escapeHtml(lessonText);
     if (
-      extraItems.length === 0 &&
+      blocks.length === 0 &&
       mediaItems.length === 1 &&
       escapedLessonText.length > 0 &&
       escapedLessonText.length <= MEDIA_CAPTION_LIMIT
@@ -305,18 +336,18 @@ async function sendLesson(chatId, userId, lessonIndex) {
 
     for (let index = 0; index < mediaItems.length; index += 1) {
       const isLastMedia = index === mediaItems.length - 1;
-      const mediaReplyMarkup = isLastMedia && extraItems.length === 0 ? replyMarkup : undefined;
+      const mediaReplyMarkup = isLastMedia && blocks.length === 0 ? replyMarkup : undefined;
       await sendMedia(chatId, mediaItems[index].type, mediaItems[index].file_id, "", mediaReplyMarkup);
     }
-    if (extraItems.length > 0) {
-      await sendExtraMessages(chatId, extraItems, replyMarkup);
+    if (blocks.length > 0) {
+      await sendBlocks(chatId, blocks, replyMarkup);
     }
     return;
   }
 
-  if (extraItems.length > 0) {
+  if (blocks.length > 0) {
     await sendLongPlainMessage(chatId, lessonText || "Урок без текста.");
-    await sendExtraMessages(chatId, extraItems, replyMarkup);
+    await sendBlocks(chatId, blocks, replyMarkup);
     return;
   }
 
@@ -325,10 +356,20 @@ async function sendLesson(chatId, userId, lessonIndex) {
   });
 }
 
-async function sendExtraMessages(chatId, extraItems, replyMarkup) {
-  for (let index = 0; index < extraItems.length; index += 1) {
-    const isLastExtra = index === extraItems.length - 1;
-    await sendLongPlainMessage(chatId, extraItems[index], isLastExtra ? { reply_markup: replyMarkup } : {});
+async function sendBlocks(chatId, blocks, replyMarkup) {
+  for (let index = 0; index < blocks.length; index += 1) {
+    const block = blocks[index];
+    const isLastBlock = index === blocks.length - 1;
+    const blockReplyMarkup = isLastBlock ? replyMarkup : undefined;
+
+    if (block.type === "text") {
+      await sendLongPlainMessage(chatId, block.text, { reply_markup: blockReplyMarkup });
+      continue;
+    }
+
+    if (block.type === "media") {
+      await sendMedia(chatId, block.media.type, block.media.file_id, "", blockReplyMarkup);
+    }
   }
 }
 
@@ -445,20 +486,23 @@ async function showLessonEditor(chatId, index) {
   }
 
   const mediaItems = normalizeMedia(lesson.media);
-  const extraItems = normalizeExtras(lesson.extras);
+  const blocks = normalizeBlocks(lesson.blocks, lesson.extras);
   const mediaText = mediaItems.length > 0
     ? `${mediaItems.length} файл(ов): ${mediaItems.map((item) => item.type).join(", ")}`
+    : "нет";
+  const blocksText = blocks.length > 0
+    ? `${blocks.length} блок(ов): ${blocks.map(formatBlockType).join(", ")}`
     : "нет";
   const header = [
     `<b>Урок ${index + 1}</b>`,
     "",
     `<b>Название:</b> ${escapeHtml(lesson.title || "Без названия")}`,
     `<b>Медиа:</b> ${escapeHtml(mediaText)}`,
-    `<b>Допсообщения:</b> ${extraItems.length}`,
+    `<b>Допблоки:</b> ${escapeHtml(blocksText)}`,
   ].join("\n");
 
   await sendMessage(chatId, header);
-  if (extraItems.length === 0) {
+  if (blocks.length === 0) {
     await sendLongPlainMessage(chatId, lesson.text || "Без текста", {
       reply_markup: lessonEditKeyboard(index, lesson),
     });
@@ -466,13 +510,28 @@ async function showLessonEditor(chatId, index) {
   }
 
   await sendLongPlainMessage(chatId, lesson.text || "Без текста");
-  for (let extraIndex = 0; extraIndex < extraItems.length; extraIndex += 1) {
-    const isLastExtra = extraIndex === extraItems.length - 1;
-    await sendMessage(chatId, `<b>Допсообщение ${extraIndex + 1}</b>`);
-    await sendLongPlainMessage(chatId, extraItems[extraIndex], isLastExtra ? {
-      reply_markup: lessonEditKeyboard(index, lesson),
-    } : {});
+  for (let blockIndex = 0; blockIndex < blocks.length; blockIndex += 1) {
+    const block = blocks[blockIndex];
+    const isLastBlock = blockIndex === blocks.length - 1;
+    await sendMessage(chatId, `<b>Допблок ${blockIndex + 1}: ${escapeHtml(formatBlockType(block))}</b>`);
+
+    if (block.type === "text") {
+      await sendLongPlainMessage(chatId, block.text, isLastBlock ? {
+        reply_markup: lessonEditKeyboard(index, lesson),
+      } : {});
+      continue;
+    }
+
+    if (block.type === "media") {
+      await sendMedia(chatId, block.media.type, block.media.file_id, "", isLastBlock ? lessonEditKeyboard(index, lesson) : undefined);
+    }
   }
+}
+
+function formatBlockType(block) {
+  if (block.type === "text") return "текст";
+  if (block.type === "media") return block.media?.type || "медиа";
+  return "неизвестно";
 }
 
 function shortenText(value, maxLength) {
@@ -516,14 +575,14 @@ async function startLessonEdit(chatId, userId, index, field) {
     return;
   }
 
-  if (field === "add_extra") {
-    await sendMessage(chatId, "Отправь текст допсообщения, которое нужно добавить к уроку. Для отмены отправь /cancel.");
+  if (field === "add_block") {
+    await sendMessage(chatId, "Отправь текст или медиафайл, который нужно добавить после основного урока. Для отмены отправь /cancel.");
     return;
   }
 
-  if (field === "replace_extras") {
-    setAdminState(userId, { ...editState, extras: [] });
-    await sendMessage(chatId, "Отправь новые допсообщения одно за другим. Они заменят все текущие допсообщения. Когда закончишь, отправь /done. Для отмены отправь /cancel.");
+  if (field === "replace_blocks") {
+    setAdminState(userId, { ...editState, blocks: [] });
+    await sendMessage(chatId, "Отправь новые допблоки одно за другим: текст, видео, аудио, фото или документ. Они заменят все текущие допблоки. Когда закончишь, отправь /done. Для отмены отправь /cancel.");
     return;
   }
 
@@ -610,20 +669,21 @@ async function handleAdminDraftMessage(message) {
     return true;
   }
 
-  if (state.step === "extras") {
+  if (state.step === "blocks") {
     if (text === "/skip" || text === "/done") {
       await publishAdminDraft(message.from.id, chatId, state.draft);
       return true;
     }
 
-    if (!text) {
-      await sendMessage(chatId, "Отправь текст допсообщения, /done или /skip.");
+    const block = blockFromMessage(message);
+    if (!block) {
+      await sendMessage(chatId, "Отправь текст или медиафайл, /done или /skip.");
       return true;
     }
 
-    state.draft.extras = [...(state.draft.extras || []), text];
+    state.draft.blocks = [...(state.draft.blocks || []), block];
     setAdminState(message.from.id, state);
-    await sendMessage(chatId, `Допсообщение добавлено: ${state.draft.extras.length}. Можешь отправить еще одно или /done.`);
+    await sendMessage(chatId, `Допблок добавлен: ${state.draft.blocks.length}. Можешь отправить еще текст/медиа или /done.`);
     return true;
   }
 
@@ -673,40 +733,43 @@ async function handleLessonEditMessage(message, state) {
     return;
   }
 
-  if (state.field === "add_extra") {
-    const text = message.text?.trim();
-    if (!text) {
-      await sendMessage(chatId, "Допсообщение должно быть текстом. Отправь текст допсообщения.");
+  if (state.field === "add_block") {
+    const block = blockFromMessage(message);
+    if (!block) {
+      await sendMessage(chatId, "Отправь текст или медиафайл для допблока.");
       return;
     }
 
-    lesson.extras = [...normalizeExtras(lesson.extras), text];
+    lesson.blocks = [...normalizeBlocks(lesson.blocks, lesson.extras), block];
+    lesson.extras = undefined;
     saveLessons(lessons);
     setAdminState(message.from.id, null);
-    await sendMessage(chatId, "Допсообщение добавлено.");
+    await sendMessage(chatId, "Допблок добавлен.");
     await showLessonEditor(chatId, state.index);
     return;
   }
 
-  if (state.field === "replace_extras") {
+  if (state.field === "replace_blocks") {
     const text = message.text?.trim();
     if (text === "/done") {
-      lesson.extras = normalizeExtras(state.extras);
+      lesson.blocks = normalizeBlocks(state.blocks);
+      lesson.extras = undefined;
       saveLessons(lessons);
       setAdminState(message.from.id, null);
-      await sendMessage(chatId, "Допсообщения заменены.");
+      await sendMessage(chatId, "Допблоки заменены.");
       await showLessonEditor(chatId, state.index);
       return;
     }
 
-    if (!text) {
-      await sendMessage(chatId, "Отправь текст допсообщения или /done.");
+    const block = blockFromMessage(message);
+    if (!block) {
+      await sendMessage(chatId, "Отправь текст, медиафайл или /done.");
       return;
     }
 
-    state.extras = [...(state.extras || []), text];
+    state.blocks = [...(state.blocks || []), block];
     setAdminState(message.from.id, state);
-    await sendMessage(chatId, `Допсообщение добавлено в новый набор: ${state.extras.length}. Можешь отправить еще одно или /done.`);
+    await sendMessage(chatId, `Допблок добавлен в новый набор: ${state.blocks.length}. Можешь отправить еще текст/медиа или /done.`);
     return;
   }
 
@@ -749,10 +812,10 @@ async function handleLessonEditMessage(message, state) {
 
 async function startExtrasCreationStep(userId, chatId, state, media) {
   state.draft.media = normalizeMedia(media);
-  state.draft.extras = [];
-  state.step = "extras";
+  state.draft.blocks = [];
+  state.step = "blocks";
   setAdminState(userId, state);
-  await sendMessage(chatId, "Теперь отправь допсообщения к уроку: задания, материалы или комментарии. Каждое сообщение будет отправлено студенту отдельно. Когда закончишь, отправь /done. Если допсообщений нет, отправь /skip.");
+  await sendMessage(chatId, "Теперь отправь допблоки после основного урока: текст, видео, аудио, фото или документ в нужном порядке. Когда закончишь, отправь /done. Если допблоков нет, отправь /skip.");
 }
 
 async function publishAdminDraft(userId, chatId, draft) {
@@ -762,7 +825,7 @@ async function publishAdminDraft(userId, chatId, draft) {
     title: draft.title,
     text: draft.text,
     media: normalizeMedia(draft.media),
-    extras: normalizeExtras(draft.extras),
+    blocks: normalizeBlocks(draft.blocks),
   });
   saveLessons(lessons);
   setAdminState(userId, null);
@@ -806,7 +869,7 @@ async function removeLessonMedia(chatId, index) {
   await showLessonEditor(chatId, index);
 }
 
-async function removeLessonExtras(chatId, index) {
+async function removeLessonBlocks(chatId, index) {
   const lessons = getLessons();
   const lesson = lessons[index];
 
@@ -817,9 +880,10 @@ async function removeLessonExtras(chatId, index) {
     return;
   }
 
-  lesson.extras = [];
+  lesson.blocks = [];
+  lesson.extras = undefined;
   saveLessons(lessons);
-  await sendMessage(chatId, "Допсообщения удалены.");
+  await sendMessage(chatId, "Допблоки удалены.");
   await showLessonEditor(chatId, index);
 }
 
@@ -983,9 +1047,9 @@ async function handleCallbackQuery(callbackQuery) {
     return;
   }
 
-  if (data.startsWith("admin:remove_extras:")) {
+  if (data.startsWith("admin:remove_blocks:")) {
     const index = Number(data.split(":")[2]);
-    await removeLessonExtras(chatId, index);
+    await removeLessonBlocks(chatId, index);
     return;
   }
 
