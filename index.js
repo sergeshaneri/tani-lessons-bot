@@ -1,5 +1,6 @@
 const fs = require("node:fs");
 const path = require("node:path");
+const crypto = require("node:crypto");
 
 loadEnvFile(path.join(__dirname, ".env"));
 
@@ -72,20 +73,36 @@ function getLessons() {
   }
 
   const lessons = readJson(LESSONS_PATH, []);
-  return [...lessons].sort((a, b) => a.order - b.order);
+  const normalizedLessons = normalizeLessons(lessons);
+  if (normalizedLessons.some((lesson, index) => lesson.id !== lessons[index]?.id)) {
+    writeJson(LESSONS_PATH, normalizedLessons);
+  }
+  return normalizedLessons;
 }
 
 function saveLessons(lessons) {
-  const normalizedLessons = lessons
+  writeJson(LESSONS_PATH, normalizeLessons(lessons));
+}
+
+function normalizeLessons(lessons) {
+  return lessons
     .map((lesson, index) => ({
       ...lesson,
+      id: lesson.id || createLessonId(),
       order: index + 1,
       media: normalizeMedia(lesson.media),
       blocks: normalizeBlocks(lesson.blocks, lesson.extras),
       extras: undefined,
     }))
     .sort((a, b) => a.order - b.order);
-  writeJson(LESSONS_PATH, normalizedLessons);
+}
+
+function createLessonId() {
+  return crypto.randomBytes(6).toString("hex");
+}
+
+function findLessonIndex(lessons, lessonRef) {
+  return lessons.findIndex((lesson) => lesson.id === lessonRef);
 }
 
 function normalizeMedia(media) {
@@ -226,42 +243,44 @@ function normalizeAdminControlText(text) {
 
 function lessonListKeyboard(lessons) {
   const rows = lessons.map((lesson, index) => [
-    { text: `${index + 1}. ${shortenText(lesson.title || "Без названия", 40)}`, callback_data: `admin:lesson:${index}` },
+    { text: `${index + 1}. ${shortenText(lesson.title || "Без названия", 40)}`, callback_data: `admin:lesson:${lesson.id}` },
   ]);
   rows.push([{ text: "Назад", callback_data: "admin:menu" }]);
   return { inline_keyboard: rows };
 }
 
 function lessonEditKeyboard(index, lesson) {
+  const lessonRef = lesson.id || String(index);
   const mediaItems = normalizeMedia(lesson.media);
   const blocks = normalizeBlocks(lesson.blocks, lesson.extras);
   const rows = [
-    [{ text: "Редактировать название", callback_data: `admin:edit:title:${index}` }],
-    [{ text: "Редактировать текст", callback_data: `admin:edit:text:${index}` }],
-    [{ text: "Добавить допблок", callback_data: `admin:edit:add_block:${index}` }],
-    [{ text: "Заменить все допблоки", callback_data: `admin:edit:replace_blocks:${index}` }],
-    [{ text: "Добавить медиа", callback_data: `admin:edit:add_media:${index}` }],
-    [{ text: "Заменить все медиа", callback_data: `admin:edit:replace_media:${index}` }],
+    [{ text: "Редактировать название", callback_data: `admin:edit:title:${lessonRef}` }],
+    [{ text: "Редактировать текст", callback_data: `admin:edit:text:${lessonRef}` }],
+    [{ text: "Добавить допблок", callback_data: `admin:edit:add_block:${lessonRef}` }],
+    [{ text: "Заменить все допблоки", callback_data: `admin:edit:replace_blocks:${lessonRef}` }],
+    [{ text: "Добавить медиа", callback_data: `admin:edit:add_media:${lessonRef}` }],
+    [{ text: "Заменить все медиа", callback_data: `admin:edit:replace_media:${lessonRef}` }],
   ];
 
   if (blocks.length > 0) {
-    rows.push([{ text: "Удалить все допблоки", callback_data: `admin:remove_blocks:${index}` }]);
+    rows.push([{ text: "Удалить все допблоки", callback_data: `admin:remove_blocks:${lessonRef}` }]);
   }
 
   if (mediaItems.length > 0) {
-    rows.push([{ text: "Удалить все медиа", callback_data: `admin:remove_media:${index}` }]);
+    rows.push([{ text: "Удалить все медиа", callback_data: `admin:remove_media:${lessonRef}` }]);
   }
 
-  rows.push([{ text: "Удалить урок", callback_data: `admin:confirm_delete:${index}` }]);
+  rows.push([{ text: "Добавить урок перед этим", callback_data: `admin:add_before:${lessonRef}` }]);
+  rows.push([{ text: "Удалить урок", callback_data: `admin:confirm_delete:${lessonRef}` }]);
   rows.push([{ text: "Назад к списку", callback_data: "admin:list" }]);
   return { inline_keyboard: rows };
 }
 
-function deleteConfirmKeyboard(index) {
+function deleteConfirmKeyboard(lessonRef) {
   return {
     inline_keyboard: [
-      [{ text: "Да, удалить урок", callback_data: `admin:delete:${index}` }],
-      [{ text: "Нет, оставить", callback_data: `admin:lesson:${index}` }],
+      [{ text: "Да, удалить урок", callback_data: `admin:delete:${lessonRef}` }],
+      [{ text: "Нет, оставить", callback_data: `admin:lesson:${lessonRef}` }],
     ],
   };
 }
@@ -505,8 +524,9 @@ async function showLessonsList(chatId) {
   });
 }
 
-async function showLessonEditor(chatId, index) {
+async function showLessonEditor(chatId, lessonRef) {
   const lessons = getLessons();
+  const index = findLessonIndex(lessons, lessonRef);
   const lesson = lessons[index];
 
   if (!lesson) {
@@ -571,17 +591,26 @@ function shortenText(value, maxLength) {
   return `${text.slice(0, maxLength - 3)}...`;
 }
 
-async function startLessonCreation(chatId, userId) {
+async function startLessonCreation(chatId, userId, insertBeforeRef = null) {
+  const lessons = getLessons();
+  const insertBeforeIndex = insertBeforeRef ? findLessonIndex(lessons, insertBeforeRef) : -1;
+  const insertBeforeLesson = insertBeforeIndex === -1 ? null : lessons[insertBeforeIndex];
+
   setAdminState(userId, {
     action: "add_lesson",
     step: "title",
     draft: {},
+    insertBeforeId: insertBeforeLesson?.id || null,
   });
-  await sendMessage(chatId, "Напиши название урока. Для отмены отправь /cancel.");
+  const placeText = insertBeforeLesson
+    ? ` Новый урок будет добавлен перед: ${insertBeforeIndex + 1}. ${insertBeforeLesson.title || "Без названия"}.`
+    : "";
+  await sendMessage(chatId, `Напиши название урока.${placeText} Для отмены отправь /cancel.`);
 }
 
-async function startLessonEdit(chatId, userId, index, field) {
+async function startLessonEdit(chatId, userId, lessonRef, field) {
   const lessons = getLessons();
+  const index = findLessonIndex(lessons, lessonRef);
   if (!lessons[index]) {
     await sendMessage(chatId, "Урок не найден.", {
       reply_markup: adminMenuKeyboard(),
@@ -591,7 +620,7 @@ async function startLessonEdit(chatId, userId, index, field) {
 
   const editState = {
     action: "edit_lesson",
-    index,
+    lessonId: lessons[index].id,
     field,
   };
   setAdminState(userId, editState);
@@ -739,7 +768,9 @@ async function handleLessonEditMessage(message, state) {
   const chatId = message.chat.id;
   const controlText = normalizeAdminControlText(message.text?.trim());
   const lessons = getLessons();
-  const lesson = lessons[state.index];
+  const lessonRef = state.lessonId || state.index;
+  const lessonIndex = findLessonIndex(lessons, lessonRef);
+  const lesson = lessons[lessonIndex];
 
   if (!lesson) {
     setAdminState(message.from.id, null);
@@ -760,7 +791,7 @@ async function handleLessonEditMessage(message, state) {
     saveLessons(lessons);
     setAdminState(message.from.id, null);
     await sendMessage(chatId, "Название обновлено.");
-    await showLessonEditor(chatId, state.index);
+    await showLessonEditor(chatId, lessonRef);
     return;
   }
 
@@ -775,7 +806,7 @@ async function handleLessonEditMessage(message, state) {
     saveLessons(lessons);
     setAdminState(message.from.id, null);
     await sendMessage(chatId, "Текст обновлен.");
-    await showLessonEditor(chatId, state.index);
+    await showLessonEditor(chatId, lessonRef);
     return;
   }
 
@@ -791,7 +822,7 @@ async function handleLessonEditMessage(message, state) {
     saveLessons(lessons);
     setAdminState(message.from.id, null);
     await sendMessage(chatId, "Допблок добавлен.");
-    await showLessonEditor(chatId, state.index);
+    await showLessonEditor(chatId, lessonRef);
     return;
   }
 
@@ -805,7 +836,7 @@ async function handleLessonEditMessage(message, state) {
       await sendMessage(chatId, "Допблоки заменены.", {
         reply_markup: adminReplyKeyboard(),
       });
-      await showLessonEditor(chatId, state.index);
+      await showLessonEditor(chatId, lessonRef);
       return;
     }
 
@@ -836,7 +867,7 @@ async function handleLessonEditMessage(message, state) {
     saveLessons(lessons);
     setAdminState(message.from.id, null);
     await sendMessage(chatId, "Медиа добавлено.");
-    await showLessonEditor(chatId, state.index);
+    await showLessonEditor(chatId, lessonRef);
     return;
   }
 
@@ -848,7 +879,7 @@ async function handleLessonEditMessage(message, state) {
       await sendMessage(chatId, "Медиа заменено.", {
         reply_markup: adminReplyKeyboard(),
       });
-      await showLessonEditor(chatId, state.index);
+      await showLessonEditor(chatId, lessonRef);
       return;
     }
 
@@ -880,13 +911,23 @@ async function startExtrasCreationStep(userId, chatId, state, media) {
 
 async function publishAdminDraft(userId, chatId, draft) {
   const lessons = getLessons();
-  lessons.push({
+  const newLesson = {
     order: lessons.length + 1,
     title: draft.title,
     text: draft.text,
     media: normalizeMedia(draft.media),
     blocks: normalizeBlocks(draft.blocks),
-  });
+  };
+  const insertBeforeId = getAdminState(userId)?.insertBeforeId;
+  const insertBeforeIndex = insertBeforeId ? findLessonIndex(lessons, insertBeforeId) : -1;
+
+  if (insertBeforeIndex === -1) {
+    lessons.push(newLesson);
+  } else {
+    lessons.splice(insertBeforeIndex, 0, newLesson);
+    normalizeProgressAfterLessonInsert(insertBeforeIndex);
+  }
+
   saveLessons(lessons);
   setAdminState(userId, null);
 
@@ -896,8 +937,9 @@ async function publishAdminDraft(userId, chatId, draft) {
   await showAdminMenu(chatId);
 }
 
-async function deleteLesson(chatId, index) {
+async function deleteLesson(chatId, lessonRef) {
   const lessons = getLessons();
+  const index = findLessonIndex(lessons, lessonRef);
   if (index < 0 || index >= lessons.length) {
     await sendMessage(chatId, "Урок не найден.", {
       reply_markup: adminMenuKeyboard(),
@@ -913,8 +955,9 @@ async function deleteLesson(chatId, index) {
   });
 }
 
-async function confirmDeleteLesson(chatId, index) {
+async function confirmDeleteLesson(chatId, lessonRef) {
   const lessons = getLessons();
+  const index = findLessonIndex(lessons, lessonRef);
   const lesson = lessons[index];
 
   if (!lesson) {
@@ -927,12 +970,13 @@ async function confirmDeleteLesson(chatId, index) {
   await sendMessage(
     chatId,
     `Точно удалить урок ${index + 1}: ${escapeHtml(lesson.title || "Без названия")}?`,
-    { reply_markup: deleteConfirmKeyboard(index) },
+    { reply_markup: deleteConfirmKeyboard(lesson.id || lessonRef) },
   );
 }
 
-async function removeLessonMedia(chatId, index) {
+async function removeLessonMedia(chatId, lessonRef) {
   const lessons = getLessons();
+  const index = findLessonIndex(lessons, lessonRef);
   const lesson = lessons[index];
 
   if (!lesson) {
@@ -945,11 +989,12 @@ async function removeLessonMedia(chatId, index) {
   lesson.media = [];
   saveLessons(lessons);
   await sendMessage(chatId, "Медиа удалено.");
-  await showLessonEditor(chatId, index);
+  await showLessonEditor(chatId, lessonRef);
 }
 
-async function removeLessonBlocks(chatId, index) {
+async function removeLessonBlocks(chatId, lessonRef) {
   const lessons = getLessons();
+  const index = findLessonIndex(lessons, lessonRef);
   const lesson = lessons[index];
 
   if (!lesson) {
@@ -963,7 +1008,7 @@ async function removeLessonBlocks(chatId, index) {
   lesson.extras = undefined;
   saveLessons(lessons);
   await sendMessage(chatId, "Допблоки удалены.");
-  await showLessonEditor(chatId, index);
+  await showLessonEditor(chatId, lessonRef);
 }
 
 function normalizeProgressAfterLessonDelete(deletedIndex) {
@@ -971,6 +1016,16 @@ function normalizeProgressAfterLessonDelete(deletedIndex) {
   for (const [userId, lessonIndex] of Object.entries(progress)) {
     if (lessonIndex > deletedIndex) {
       progress[userId] = lessonIndex - 1;
+    }
+  }
+  saveProgress(progress);
+}
+
+function normalizeProgressAfterLessonInsert(insertedIndex) {
+  const progress = getProgress();
+  for (const [userId, lessonIndex] of Object.entries(progress)) {
+    if (lessonIndex >= insertedIndex) {
+      progress[userId] = lessonIndex + 1;
     }
   }
   saveProgress(progress);
@@ -1095,6 +1150,12 @@ async function handleCallbackQuery(callbackQuery) {
     return;
   }
 
+  if (data.startsWith("admin:add_before:")) {
+    const lessonRef = data.split(":")[2];
+    await startLessonCreation(chatId, userId, lessonRef);
+    return;
+  }
+
   if (data === "admin:list") {
     await showLessonsList(chatId);
     return;
@@ -1109,38 +1170,38 @@ async function handleCallbackQuery(callbackQuery) {
   }
 
   if (data.startsWith("admin:lesson:")) {
-    const index = Number(data.split(":")[2]);
-    await showLessonEditor(chatId, index);
+    const lessonRef = data.split(":")[2];
+    await showLessonEditor(chatId, lessonRef);
     return;
   }
 
   if (data.startsWith("admin:edit:")) {
-    const [, , field, rawIndex] = data.split(":");
-    await startLessonEdit(chatId, userId, Number(rawIndex), field);
+    const [, , field, lessonRef] = data.split(":");
+    await startLessonEdit(chatId, userId, lessonRef, field);
     return;
   }
 
   if (data.startsWith("admin:remove_media:")) {
-    const index = Number(data.split(":")[2]);
-    await removeLessonMedia(chatId, index);
+    const lessonRef = data.split(":")[2];
+    await removeLessonMedia(chatId, lessonRef);
     return;
   }
 
   if (data.startsWith("admin:remove_blocks:")) {
-    const index = Number(data.split(":")[2]);
-    await removeLessonBlocks(chatId, index);
+    const lessonRef = data.split(":")[2];
+    await removeLessonBlocks(chatId, lessonRef);
     return;
   }
 
   if (data.startsWith("admin:confirm_delete:")) {
-    const index = Number(data.split(":")[2]);
-    await confirmDeleteLesson(chatId, index);
+    const lessonRef = data.split(":")[2];
+    await confirmDeleteLesson(chatId, lessonRef);
     return;
   }
 
   if (data.startsWith("admin:delete:")) {
-    const index = Number(data.split(":")[2]);
-    await deleteLesson(chatId, index);
+    const lessonRef = data.split(":")[2];
+    await deleteLesson(chatId, lessonRef);
   }
 }
 

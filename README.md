@@ -34,10 +34,12 @@ The admin panel supports:
 - editing lesson labels, text, main media, and extra blocks;
 - attaching one or multiple main media files;
 - adding extra blocks after the main lesson;
+- inserting a new lesson before an existing lesson;
 - mixing text and media inside extra blocks;
 - listing and deleting lessons.
 
 Lesson deletion requires a second confirmation button.
+Lesson actions use stable lesson IDs internally, so old buttons from outdated lesson lists cannot delete a shifted lesson.
 
 ## Lesson Structure
 
